@@ -1,5 +1,28 @@
 /* 与 Electron 版 OneThought 的 styles 对应（仅复制本工程所需部分，不修改原仓库） */
 
+/* ── Quick-capture window ─────────────────────────────────────── */
+
+/* Match window background to card background on all platforms */
+html.qc-mode body {
+  background: var(--bg-elevated) !important;
+}
+
+/* #root shrinks to content height (fitHeight sets window size) */
+html.qc-mode #root {
+  height: auto !important;
+  overflow: visible !important;
+}
+
+/* Card fills the full window width — no horizontal gaps */
+html.qc-mode .qc-card {
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+  border-radius: 12px;
+  border: none;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+}
+
 :root {
   --bg: #fafafa;
   --bg-elevated: #ffffff;
@@ -1096,6 +1119,132 @@ body {
   display: flex;
   justify-content: flex-end;
 }
+
+/* ─── QuickCapture standalone window ────────────────────── */
+.qc-root {
+  width: 100vw;
+  display: flex;
+  justify-content: center;
+  background: transparent;
+}
+
+.qc-card {
+  width: 100%;
+  max-width: 580px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.30);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: 0 16px;
+}
+
+.qc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px 10px;
+  -webkit-app-region: drag;
+}
+
+.qc-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  -webkit-app-region: drag;
+}
+
+.qc-close {
+  -webkit-app-region: no-drag;
+  background: none;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.qc-close:hover { color: var(--text); }
+
+.qc-body {
+  padding: 0 18px 10px;
+  -webkit-app-region: no-drag;
+}
+
+.qc-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 110px;
+  max-height: 200px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+  resize: none;
+  outline: none;
+  font-family: inherit;
+}
+.qc-textarea:focus { border-color: var(--accent); }
+
+.qc-tag-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.qc-tag-chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.12s, box-shadow 0.12s;
+}
+.qc-tag-chip:hover { opacity: 1; }
+.qc-tag-chip.selected {
+  opacity: 1;
+}
+.qc-tag-chip[data-color="0"] { background: var(--tag-1); }
+.qc-tag-chip[data-color="1"] { background: var(--tag-2); }
+.qc-tag-chip[data-color="2"] { background: var(--tag-3); }
+.qc-tag-chip[data-color="3"] { background: var(--tag-4); }
+.qc-tag-chip[data-color="4"] { background: var(--tag-5); }
+
+.qc-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 18px 14px;
+  border-top: 1px solid var(--border);
+  -webkit-app-region: no-drag;
+}
+
+.qc-hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.qc-save-btn {
+  padding: 7px 18px;
+  border-radius: var(--radius);
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+.qc-save-btn:hover { background: var(--accent-hover); }
+.qc-save-btn.success { background: var(--success); }
 
 /* ─── Modal Overlay ───────────────────────────────────────── */
 .modal-overlay {

@@ -11,6 +11,7 @@
   },
   "app": {
     "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -19,6 +20,20 @@
         "height": 820,
         "minWidth": 980,
         "minHeight": 640
+      },
+      {
+        "label": "quick_capture",
+        "title": "OneThought",
+        "width": 580,
+        "height": 300,
+        "minWidth": 580,
+        "minHeight": 200,
+        "visible": false,
+        "decorations": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "center": true,
+        "url": "index.html#quick"
       }
     ]
   },

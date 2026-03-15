@@ -3,3 +3,7 @@ dist
 src-tauri/target
 *.log
 .DS_Store
+release-artifacts/
+tsconfig.*.tsbuildinfo
+vite.config.d.ts
+vite.config.js

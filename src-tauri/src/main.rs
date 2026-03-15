@@ -221,17 +221,27 @@ fn main() {
                 thoughts: RwLock::new(repo),
             });
 
-            // Register global shortcut: show main window + emit quick-capture event
+            // Register global shortcut: show only the dedicated quick-capture popup.
+            // The main window is never touched — it stays hidden/visible as-is.
             app.global_shortcut().on_shortcut(hotkey.as_str(), |handle, _, event| {
                 if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                    if let Some(win) = handle.get_webview_window("main") {
-                        let _ = win.unminimize();
+                    if let Some(win) = handle.get_webview_window("quick_capture") {
                         let _ = win.show();
                         let _ = win.set_focus();
                     }
-                    let _ = handle.emit("show_quick_capture", ());
                 }
             })?;
+
+            // Hide quick_capture window instead of closing it
+            if let Some(qc_win) = app.get_webview_window("quick_capture") {
+                let qc_clone = qc_win.clone();
+                qc_win.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = qc_clone.hide();
+                    }
+                });
+            }
 
             // System tray: show/quit menu
             let show_item = MenuItemBuilder::new("显示窗口").id("show").build(app)?;

@@ -368,6 +368,10 @@ export default function App() {
     }
   }, [showQuickCapture]);
 
+  const closeQuickCapture = useCallback(() => {
+    setShowQuickCapture(false);
+  }, []);
+
   const handleNavClick = (newView: AppView) => {
     setView(newView);
     if (newView === "settings" && config) {
@@ -394,7 +398,7 @@ export default function App() {
     await reload();
     setTimeout(() => {
       setQuickSaveStatus("idle");
-      setShowQuickCapture(false);
+      void closeQuickCapture();
     }, 800);
   };
 
@@ -480,7 +484,7 @@ export default function App() {
         <div
           className="modal-overlay"
           onClick={(e) => {
-            if (e.target === e.currentTarget) setShowQuickCapture(false);
+            if (e.target === e.currentTarget) void closeQuickCapture();
           }}
         >
           <div className="modal-card quick-capture-card">
@@ -489,7 +493,7 @@ export default function App() {
               <button
                 type="button"
                 className="modal-close"
-                onClick={() => setShowQuickCapture(false)}
+                onClick={() => void closeQuickCapture()}
               >
                 ×
               </button>
@@ -514,7 +518,7 @@ export default function App() {
                     : allTags.slice(0, 15);
                   if (hashMatch && prefix && !suggestions.includes(prefix)) suggestions = [prefix, ...suggestions];
 
-                  if (e.key === "Escape") { setShowQuickCapture(false); return; }
+                  if (e.key === "Escape") { void closeQuickCapture(); return; }
 
                   if (e.key === "ArrowDown" && suggestions.length > 0) {
                     e.preventDefault();
