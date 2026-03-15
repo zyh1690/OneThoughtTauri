@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Window, LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./api";
 import type { Thought } from "./types";
@@ -24,11 +24,28 @@ export default function QuickCapture() {
     return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   }, [allThoughts]);
 
+  const close = useCallback(async () => {
+    setThought("");
+    setSaveStatus("idle");
+    await Window.getByLabel("quick_capture").then((win) => win?.hide());
+  }, []);
+
   useEffect(() => {
     void api.listAllThoughts().then(setAllThoughts);
     const t = setTimeout(() => textareaRef.current?.focus(), 50);
     return () => clearTimeout(t);
   }, []);
+
+  // Global Escape listener — catches Esc even when textarea is not focused.
+  // Necessary on Windows where focus timing can differ from macOS.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.isComposing) return;
+      if (e.key === "Escape") void close();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [close]);
 
   // Resize window height to exactly fit the card content.
   // Width is fixed at 580px (matching the window config), so only height needs adjusting.
@@ -81,12 +98,6 @@ export default function QuickCapture() {
       clearTimeout(timer);
     };
   }, []);
-
-  const close = async () => {
-    setThought("");
-    setSaveStatus("idle");
-    await Window.getByLabel("quick_capture").then((win) => win?.hide());
-  };
 
   const submit = async () => {
     if (!thought.trim()) return;
