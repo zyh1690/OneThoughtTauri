@@ -307,11 +307,18 @@ fn main() {
                     }
                 }
             });
-            match &shortcut_result {
-                Ok(_) => app_log("全局快捷键注册成功"),
-                Err(e) => app_log(&format!("全局快捷键注册失败（可能被其他应用占用）: {:?}", e)),
+            match shortcut_result {
+                Ok(_) => app_log(&format!("全局快捷键 {} 注册成功", hotkey)),
+                Err(e) => {
+                    // Don't crash — the app still works via tray icon.
+                    // User can change the hotkey in Settings to avoid the conflict.
+                    app_log(&format!(
+                        "警告: 全局快捷键 {} 注册失败（已被其他应用占用）: {:?}",
+                        hotkey, e
+                    ));
+                    app_log("提示: 请在「设置」中更改快捷键（例如改为 Alt+T 或 Control+Shift+T）");
+                }
             }
-            shortcut_result?;
 
             // Hide quick_capture window instead of closing it
             if let Some(qc_win) = app.get_webview_window("quick_capture") {
