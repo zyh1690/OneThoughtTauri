@@ -41,6 +41,15 @@ fn init_logging() {
     }));
 }
 
+/// Safely truncate a UTF-8 string to at most `max_chars` Unicode characters.
+/// Unlike byte-slice `&s[..n]`, this never panics on multi-byte characters.
+fn truncate_chars(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
 struct AppState {
     config: ConfigStore,
     thoughts: RwLock<ThoughtRepository>,
@@ -215,8 +224,8 @@ async fn ai_summarize(app: tauri::AppHandle, payload: AiSummarizePayload) -> Res
             }
             Err(ureq::Error::Status(code, r)) => {
                 let err_body = r.into_string().unwrap_or_default();
-                app_log(&format!("[AI] HTTP {} 错误: {}", code, &err_body[..err_body.len().min(500)]));
-                let _ = app.emit("ai_stream_error", format!("HTTP {}: {}", code, &err_body[..err_body.len().min(400)]));
+                app_log(&format!("[AI] HTTP {} 错误: {}", code, truncate_chars(&err_body, 500)));
+                let _ = app.emit("ai_stream_error", format!("HTTP {}: {}", code, truncate_chars(&err_body, 400)));
                 return Ok(());
             }
             Err(e) => {
@@ -236,7 +245,7 @@ async fn ai_summarize(app: tauri::AppHandle, payload: AiSummarizePayload) -> Res
                     return Ok(());
                 }
             };
-            app_log(&format!("[AI] 行内响应(前500字符): {}", &body_str[..body_str.len().min(500)]));
+            app_log(&format!("[AI] 行内响应(前500字符): {}", truncate_chars(&body_str, 500)));
 
             match serde_json::from_str::<serde_json::Value>(&body_str) {
                 Ok(json) => {
@@ -246,7 +255,7 @@ async fn ai_summarize(app: tauri::AppHandle, payload: AiSummarizePayload) -> Res
                         .unwrap_or("");
                     if content.is_empty() {
                         app_log("[AI] 响应中未找到 choices[0].message.content");
-                        let _ = app.emit("ai_stream_error", format!("响应格式异常，原始内容: {}", &body_str[..body_str.len().min(300)]));
+                        let _ = app.emit("ai_stream_error", format!("响应格式异常，原始内容: {}", truncate_chars(&body_str, 300)));
                     } else {
                         app_log(&format!("[AI] 行内响应内容长度: {} 字符", content.len()));
                         let _ = app.emit("ai_stream_chunk", content.to_string());
@@ -254,7 +263,7 @@ async fn ai_summarize(app: tauri::AppHandle, payload: AiSummarizePayload) -> Res
                     }
                 }
                 Err(e) => {
-                    app_log(&format!("[AI] JSON 解析失败: {} | 原始: {}", e, &body_str[..body_str.len().min(300)]));
+                    app_log(&format!("[AI] JSON 解析失败: {} | 原始: {}", e, truncate_chars(&body_str, 300)));
                     let _ = app.emit("ai_stream_error", format!("JSON 解析失败: {}", e));
                 }
             }
