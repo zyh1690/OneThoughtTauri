@@ -457,7 +457,8 @@ export default function App() {
 
   const generateAiSummary = async () => {
     if (!config?.llmEnabled || !config.llm.baseUrl || !config.llm.apiKey) return;
-    const activeThoughts = allThoughtsForTags.filter((t) => !t.archived);
+    // Use thoughts already filtered by both time range and selected tag (= what's visible on screen)
+    const activeThoughts = groups.flatMap((g) => g.items);
     if (activeThoughts.length === 0) return;
 
     setAiSummaryStatus("loading");
