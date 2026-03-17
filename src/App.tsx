@@ -1236,8 +1236,8 @@ export default function App() {
             <p className="ai-summary-hint">请先在 AI 助手中开启并配置 LLM</p>
           )}
           {(aiSummary || aiSummaryStatus === "loading") && (
-            <div className={`ai-summary-content markdown-body ${aiSummaryStatus === "error" ? "error" : ""}`}>
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{aiSummary}</ReactMarkdown>
+            <div className={`ai-summary-content ${aiSummaryStatus === "error" ? "error" : ""}`}>
+              <pre className="ai-summary-pre">{aiSummary}</pre>
               {aiSummaryStatus === "loading" && (
                 <span className="streaming-cursor" aria-hidden="true">▋</span>
               )}

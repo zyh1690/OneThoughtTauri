@@ -768,6 +768,18 @@ body {
   padding: 10px 12px;
   min-height: 0;
 }
+.ai-summary-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
 .ai-summary-content.error {
   color: var(--danger);
   background: transparent;
