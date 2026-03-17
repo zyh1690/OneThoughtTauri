@@ -39,6 +39,8 @@ export interface AppConfig {
   hotkey: string;
   autoLaunch: boolean;
   llmEnabled: boolean;
+  /** "internal" = 行内（招行内网）, "external" = 行外（标准 OpenAI 兼容） */
+  llmMode: "internal" | "external";
   theme: "light" | "dark";
   aiSummaryPrompt: string;
   llm: {

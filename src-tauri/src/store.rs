@@ -36,6 +36,8 @@ pub struct AppConfig {
     pub hotkey: String,
     pub auto_launch: bool,
     pub llm_enabled: bool,
+    /// "internal" = 行内（招行内网）, "external" = 行外（标准 OpenAI 兼容）
+    pub llm_mode: String,
     pub theme: String,
     pub ai_summary_prompt: String,
     pub llm: LlmConfig,
@@ -75,14 +77,15 @@ fn default_config() -> AppConfig {
         hotkey: "Alt+T".to_string(),
         auto_launch: false,
         llm_enabled: false,
+        llm_mode: "internal".to_string(),
         theme: "light".to_string(),
         ai_summary_prompt: "请基于以下想法记录生成结构化总结，按主题归类并给出可执行建议。".to_string(),
         llm: LlmConfig {
-            base_url: String::new(),
+            base_url: "http://open-llm.uat.cmbchina.cn/llm/".to_string(),
             api_key: String::new(),
             model: String::new(),
             timeout_ms: 30000,
-            max_tokens: 1200,
+            max_tokens: 2000,
         },
     }
 }

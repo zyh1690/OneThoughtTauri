@@ -57,6 +57,7 @@ export function onShowQuickCapture(callback: () => void): Promise<() => void> {
 }
 
 export async function aiSummarize(payload: {
+  llmMode: "internal" | "external";
   baseUrl: string;
   apiKey: string;
   model: string;

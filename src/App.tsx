@@ -490,6 +490,7 @@ export default function App() {
 
     try {
       await api.aiSummarize({
+        llmMode: config.llmMode ?? "internal",
         baseUrl: config.llm.baseUrl,
         apiKey: config.llm.apiKey,
         model: config.llm.model,
@@ -940,47 +941,138 @@ export default function App() {
                   />
                 </div>
                 <div className="settings-row">
-                  <label>API 地址</label>
-                  <input
-                    type="text"
-                    className="settings-input"
-                    value={settingsForm.llm.baseUrl}
-                    onChange={(e) =>
-                      setSettingsForm((p) =>
-                        p ? { ...p, llm: { ...p.llm, baseUrl: e.target.value } } : p
-                      )
-                    }
-                    placeholder="https://api.openai.com/v1"
-                  />
+                  <label>网络环境</label>
+                  <div className="theme-toggle">
+                    <button
+                      type="button"
+                      className={`theme-btn ${(settingsForm.llmMode ?? "internal") === "internal" ? "active" : ""}`}
+                      onClick={() =>
+                        setSettingsForm((p) =>
+                          p
+                            ? {
+                                ...p,
+                                llmMode: "internal",
+                                llm: { ...p.llm, baseUrl: "http://open-llm.uat.cmbchina.cn/llm/" },
+                              }
+                            : p
+                        )
+                      }
+                    >
+                      行内
+                    </button>
+                    <button
+                      type="button"
+                      className={`theme-btn ${(settingsForm.llmMode ?? "internal") === "external" ? "active" : ""}`}
+                      onClick={() =>
+                        setSettingsForm((p) =>
+                          p
+                            ? {
+                                ...p,
+                                llmMode: "external",
+                                llm: { ...p.llm, baseUrl: p.llm.baseUrl === "http://open-llm.uat.cmbchina.cn/llm/" ? "" : p.llm.baseUrl },
+                              }
+                            : p
+                        )
+                      }
+                    >
+                      行外
+                    </button>
+                  </div>
                 </div>
-                <div className="settings-row">
-                  <label>API Key</label>
-                  <input
-                    type="password"
-                    className="settings-input"
-                    value={settingsForm.llm.apiKey}
-                    onChange={(e) =>
-                      setSettingsForm((p) =>
-                        p ? { ...p, llm: { ...p.llm, apiKey: e.target.value } } : p
-                      )
-                    }
-                    placeholder="sk-..."
-                  />
-                </div>
-                <div className="settings-row">
-                  <label>模型</label>
-                  <input
-                    type="text"
-                    className="settings-input"
-                    value={settingsForm.llm.model}
-                    onChange={(e) =>
-                      setSettingsForm((p) =>
-                        p ? { ...p, llm: { ...p.llm, model: e.target.value } } : p
-                      )
-                    }
-                    placeholder="gpt-4o-mini"
-                  />
-                </div>
+                {(settingsForm.llmMode ?? "internal") === "internal" ? (
+                  <>
+                    <div className="settings-row">
+                      <label>行内 API 地址</label>
+                      <input
+                        type="text"
+                        className="settings-input"
+                        value={settingsForm.llm.baseUrl}
+                        onChange={(e) =>
+                          setSettingsForm((p) =>
+                            p ? { ...p, llm: { ...p.llm, baseUrl: e.target.value } } : p
+                          )
+                        }
+                        placeholder="http://open-llm.uat.cmbchina.cn/llm/"
+                      />
+                    </div>
+                    <div className="settings-row">
+                      <label>模型名称</label>
+                      <input
+                        type="text"
+                        className="settings-input"
+                        value={settingsForm.llm.model}
+                        onChange={(e) =>
+                          setSettingsForm((p) =>
+                            p ? { ...p, llm: { ...p.llm, model: e.target.value } } : p
+                          )
+                        }
+                        placeholder="qwen3-30b-a3b-2507"
+                      />
+                    </div>
+                    <div className="settings-row">
+                      <label>API Key</label>
+                      <input
+                        type="password"
+                        className="settings-input"
+                        value={settingsForm.llm.apiKey}
+                        onChange={(e) =>
+                          setSettingsForm((p) =>
+                            p ? { ...p, llm: { ...p.llm, apiKey: e.target.value } } : p
+                          )
+                        }
+                        placeholder="Bearer Token 中 Bearer 后的部分"
+                      />
+                    </div>
+                    <div className="settings-hint">
+                      请求地址将自动拼接为：{settingsForm.llm.baseUrl.replace(/\/$/, "")}/{settingsForm.llm.model || "<模型名称>"}/v1/chat/completions
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="settings-row">
+                      <label>API 地址</label>
+                      <input
+                        type="text"
+                        className="settings-input"
+                        value={settingsForm.llm.baseUrl}
+                        onChange={(e) =>
+                          setSettingsForm((p) =>
+                            p ? { ...p, llm: { ...p.llm, baseUrl: e.target.value } } : p
+                          )
+                        }
+                        placeholder="https://api.openai.com/v1"
+                      />
+                    </div>
+                    <div className="settings-row">
+                      <label>API Key</label>
+                      <input
+                        type="password"
+                        className="settings-input"
+                        value={settingsForm.llm.apiKey}
+                        onChange={(e) =>
+                          setSettingsForm((p) =>
+                            p ? { ...p, llm: { ...p.llm, apiKey: e.target.value } } : p
+                          )
+                        }
+                        placeholder="sk-..."
+                      />
+                    </div>
+                    <div className="settings-row">
+                      <label>模型</label>
+                      <input
+                        type="text"
+                        className="settings-input"
+                        value={settingsForm.llm.model}
+                        onChange={(e) =>
+                          setSettingsForm((p) =>
+                            p ? { ...p, llm: { ...p.llm, model: e.target.value } } : p
+                          )
+                        }
+                        placeholder="gpt-4o-mini"
+                      />
+                    </div>
+                  </>
+                )}
                 <div className="settings-row settings-row-col">
                   <label>AI 摘要提示词</label>
                   <textarea
