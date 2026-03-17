@@ -182,11 +182,12 @@ async fn ai_summarize(app: tauri::AppHandle, payload: AiSummarizePayload) -> Res
     let timeout_ms = payload.timeout_ms;
 
     // ── 构造请求 Body ─────────────────────────────────────────────────────────
-    // 行内 API 使用 maxTokens（字符串），行外使用 max_tokens（数字）+ stream
+    // 行内: maxTokens 为字符串；行外: max_tokens 为数字。两者都开启 stream。
     let body = if is_internal {
         serde_json::json!({
             "model": payload.model,
             "maxTokens": payload.max_tokens.to_string(),
+            "stream": true,
             "messages": [{ "role": "user", "content": payload.prompt }],
         })
     } else {
@@ -235,49 +236,18 @@ async fn ai_summarize(app: tauri::AppHandle, payload: AiSummarizePayload) -> Res
             }
         };
 
-        if is_internal {
-            // ── 行内：非流式，读取完整 JSON 响应 ────────────────────────────
-            let body_str = match response.into_string() {
-                Ok(s) => s,
-                Err(e) => {
-                    app_log(&format!("[AI] 读取响应体失败: {}", e));
-                    let _ = app.emit("ai_stream_error", format!("读取响应失败: {}", e));
-                    return Ok(());
-                }
-            };
-            app_log(&format!("[AI] 行内响应(前500字符): {}", truncate_chars(&body_str, 500)));
-
-            match serde_json::from_str::<serde_json::Value>(&body_str) {
-                Ok(json) => {
-                    // 解析 choices[0].message.content
-                    let content = json["choices"][0]["message"]["content"]
-                        .as_str()
-                        .unwrap_or("");
-                    if content.is_empty() {
-                        app_log("[AI] 响应中未找到 choices[0].message.content");
-                        let _ = app.emit("ai_stream_error", format!("响应格式异常，原始内容: {}", truncate_chars(&body_str, 300)));
-                    } else {
-                        app_log(&format!("[AI] 行内响应内容长度: {} 字符", content.len()));
-                        let _ = app.emit("ai_stream_chunk", content.to_string());
-                        let _ = app.emit("ai_stream_done", ());
-                    }
-                }
-                Err(e) => {
-                    app_log(&format!("[AI] JSON 解析失败: {} | 原始: {}", e, truncate_chars(&body_str, 300)));
-                    let _ = app.emit("ai_stream_error", format!("JSON 解析失败: {}", e));
-                }
-            }
-        } else {
-            // ── 行外：标准 SSE 流式 ──────────────────────────────────────────
+        // ── 行内 / 行外统一使用 SSE 流式处理（格式相同） ────────────────────
+        {
             use std::io::BufRead;
             let reader = std::io::BufReader::new(response.into_reader());
             let mut chunk_count = 0usize;
+            let mode_label = if is_internal { "行内" } else { "行外" };
             for line in reader.lines() {
                 match line {
                     Ok(line) => {
                         if let Some(data) = line.strip_prefix("data: ") {
                             if data.trim() == "[DONE]" {
-                                app_log(&format!("[AI] 行外流式完成，共 {} 个 chunk", chunk_count));
+                                app_log(&format!("[AI] {}流式完成，共 {} 个 chunk", mode_label, chunk_count));
                                 let _ = app.emit("ai_stream_done", ());
                                 return Ok(());
                             }
@@ -298,7 +268,7 @@ async fn ai_summarize(app: tauri::AppHandle, payload: AiSummarizePayload) -> Res
                     }
                 }
             }
-            app_log(&format!("[AI] 行外流式结束（无 [DONE]），共 {} 个 chunk", chunk_count));
+            app_log(&format!("[AI] {}流式结束（无 [DONE]），共 {} 个 chunk", mode_label, chunk_count));
             let _ = app.emit("ai_stream_done", ());
         }
 
