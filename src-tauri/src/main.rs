@@ -2,12 +2,42 @@
 
 mod store;
 
+use std::io::Write as _;
 use std::sync::RwLock;
 use store::{AppConfig, ConfigStore, GroupedThoughts, QueryOptions, Thought, ThoughtRepository};
 use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
+
+// ── Logging helpers ──────────────────────────────────────────────────────────
+
+fn log_path() -> std::path::PathBuf {
+    std::env::current_exe()
+        .map(|p| p.parent().unwrap_or(std::path::Path::new(".")).join("onethought.log"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("onethought.log"))
+}
+
+fn app_log(msg: &str) {
+    use std::fs::OpenOptions;
+    let path = log_path();
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let _ = writeln!(f, "[{now}] {msg}");
+    }
+}
+
+fn init_logging() {
+    // Clear previous log on each launch
+    let _ = std::fs::remove_file(log_path());
+    app_log("=== OneThought 启动 ===");
+    app_log(&format!("exe 路径: {:?}", std::env::current_exe().ok()));
+
+    // Install panic hook so crashes are recorded
+    std::panic::set_hook(Box::new(|info| {
+        app_log(&format!("PANIC: {info}"));
+    }));
+}
 
 struct AppState {
     config: ConfigStore,
@@ -199,38 +229,89 @@ fn tag_remove(state: tauri::State<AppState>, app: tauri::AppHandle, tag_name: St
 }
 
 fn main() {
+    init_logging();
+
+    // ── Windows: WebView2 Fixed Version detection ────────────────────────────
+    #[cfg(target_os = "windows")]
+    {
+        let wv2_env = std::env::var("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER").unwrap_or_default();
+        app_log(&format!("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER env = {:?}", wv2_env));
+
+        if wv2_env.is_empty() {
+            // Auto-detect a "webview2" folder placed next to the exe
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(dir) = exe.parent() {
+                    for candidate in &["webview2", "WebView2"] {
+                        let p = dir.join(candidate);
+                        if p.join("msedgewebview2.exe").exists() {
+                            app_log(&format!("自动检测到 WebView2 固定版: {:?}", p));
+                            std::env::set_var("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", &p);
+                            break;
+                        }
+                    }
+                }
+            }
+        } else {
+            let msedge = std::path::Path::new(&wv2_env).join("msedgewebview2.exe");
+            app_log(&format!("msedgewebview2.exe 是否存在: {}", msedge.exists()));
+            if !msedge.exists() {
+                app_log("警告: msedgewebview2.exe 不存在，请检查 WebView2 路径是否正确！");
+                // 列出目录内容帮助排查
+                if let Ok(entries) = std::fs::read_dir(&wv2_env) {
+                    let names: Vec<_> = entries
+                        .filter_map(|e| e.ok().map(|e| e.file_name()))
+                        .collect();
+                    app_log(&format!("目录内容: {:?}", names));
+                }
+            }
+        }
+    }
+
+    app_log("开始构建 Tauri app...");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
+            app_log("Tauri setup 开始");
+
             let data_dir = app
                 .path()
                 .app_data_dir()
                 .expect("app_data_dir");
+            app_log(&format!("数据目录: {:?}", data_dir));
             ensure_dir(&data_dir);
             let config_path = data_dir.join("config.json");
             let thoughts_file = data_dir.join("thoughts.jsonl");
+            app_log("加载 config 和 thoughts...");
             let config = ConfigStore::new(config_path);
             let repo = ThoughtRepository::load(thoughts_file);
 
             // Read hotkey before config is moved into AppState
             let hotkey = config.get_config().hotkey;
+            app_log(&format!("热键: {:?}", hotkey));
 
             app.manage(AppState {
                 config,
                 thoughts: RwLock::new(repo),
             });
 
+            app_log("注册全局快捷键...");
             // Register global shortcut: show only the dedicated quick-capture popup.
             // The main window is never touched — it stays hidden/visible as-is.
-            app.global_shortcut().on_shortcut(hotkey.as_str(), |handle, _, event| {
+            let shortcut_result = app.global_shortcut().on_shortcut(hotkey.as_str(), |handle, _, event| {
                 if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                     if let Some(win) = handle.get_webview_window("quick_capture") {
                         let _ = win.show();
                         let _ = win.set_focus();
                     }
                 }
-            })?;
+            });
+            match &shortcut_result {
+                Ok(_) => app_log("全局快捷键注册成功"),
+                Err(e) => app_log(&format!("全局快捷键注册失败（可能被其他应用占用）: {:?}", e)),
+            }
+            shortcut_result?;
 
             // Hide quick_capture window instead of closing it
             if let Some(qc_win) = app.get_webview_window("quick_capture") {
@@ -248,6 +329,7 @@ fn main() {
             let quit_item = MenuItemBuilder::new("退出 OneThought").id("quit").build(app)?;
             let tray_menu = MenuBuilder::new(app).items(&[&show_item, &quit_item]).build()?;
 
+            app_log("构建系统托盘...");
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .menu(&tray_menu)
@@ -289,6 +371,7 @@ fn main() {
                 }
             });
 
+            app_log("Tauri setup 完成 ✓");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -304,5 +387,9 @@ fn main() {
             ai_summarize,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .unwrap_or_else(|e| {
+            app_log(&format!("Tauri 运行时错误: {:?}", e));
+            std::process::exit(1);
+        });
+    app_log("App 正常退出");
 }
