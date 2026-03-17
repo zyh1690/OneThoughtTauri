@@ -79,7 +79,7 @@ fn default_config() -> AppConfig {
         llm_enabled: false,
         llm_mode: "internal".to_string(),
         theme: "light".to_string(),
-        ai_summary_prompt: "请基于以下想法记录生成结构化总结，按主题归类并给出可执行建议。".to_string(),
+        ai_summary_prompt: "请对以下\"thought\"进行分类，类别为【项目管理、团队协作、阻碍问题、流程问题、内部管理、技术问题、其他】之一；\n优化问题描述，使其更清晰、简洁；\n并给出尽可能简短的解决方案，若无解决方案则填写【无】。\n\n请按照以下格式输出：\n---\n问题分类：\n问题描述：\n解决方案：\n---".to_string(),
         llm: LlmConfig {
             base_url: "http://open-llm.uat.cmbchina.cn/llm/".to_string(),
             api_key: String::new(),
