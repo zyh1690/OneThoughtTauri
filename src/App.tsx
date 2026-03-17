@@ -1020,11 +1020,8 @@ export default function App() {
                             p ? { ...p, llm: { ...p.llm, apiKey: e.target.value } } : p
                           )
                         }
-                        placeholder="Bearer Token 中 Bearer 后的部分"
+                        placeholder="sk-..."
                       />
-                    </div>
-                    <div className="settings-hint">
-                      请求地址将自动拼接为：{settingsForm.llm.baseUrl.replace(/\/$/, "")}/{settingsForm.llm.model || "<模型名称>"}/v1/chat/completions
                     </div>
                   </>
                 ) : (
