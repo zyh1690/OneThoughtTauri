@@ -78,3 +78,13 @@ export function onAiStreamDone(callback: () => void): Promise<() => void> {
 export function onAiStreamError(callback: (error: string) => void): Promise<() => void> {
   return listen<string>("ai_stream_error", (e) => callback(e.payload));
 }
+
+/** Re-register the global hotkey at runtime. Rejects with a message if the key is already taken. */
+export async function updateHotkey(newHotkey: string): Promise<void> {
+  return invoke<void>("update_hotkey", { newHotkey });
+}
+
+/** Enable or disable launch-at-login. Rejects with a human-readable message on failure. */
+export async function setAutostart(enable: boolean): Promise<void> {
+  return invoke<void>("set_autostart", { enable });
+}

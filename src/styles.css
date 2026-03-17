@@ -1117,7 +1117,35 @@ body {
   border-top: 1px solid var(--border);
   background: var(--bg-elevated);
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.settings-error {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #fff0f0;
+  color: #c0392b;
+  font-size: 13px;
+  line-height: 1.4;
+  border: 1px solid #f5c6cb;
+}
+
+[data-theme="dark"] .settings-error {
+  background: rgba(192, 57, 43, 0.15);
+  color: #ff7875;
+  border-color: rgba(192, 57, 43, 0.35);
+}
+
+.settings-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  color: var(--text-secondary);
+  font-size: 14px;
 }
 
 /* ─── QuickCapture standalone window ────────────────────── */

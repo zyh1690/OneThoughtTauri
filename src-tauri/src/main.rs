@@ -3,12 +3,14 @@
 mod store;
 
 use std::io::Write as _;
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 use store::{AppConfig, ConfigStore, GroupedThoughts, QueryOptions, Thought, ThoughtRepository};
 use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
+use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_autostart::ManagerExt as _;
 
 // ── Logging helpers ──────────────────────────────────────────────────────────
 
@@ -42,6 +44,8 @@ fn init_logging() {
 struct AppState {
     config: ConfigStore,
     thoughts: RwLock<ThoughtRepository>,
+    /// Currently registered global hotkey (empty string = none registered)
+    active_hotkey: Mutex<String>,
 }
 
 fn ensure_dir(p: &std::path::Path) {
@@ -228,6 +232,57 @@ fn tag_remove(state: tauri::State<AppState>, app: tauri::AppHandle, tag_name: St
     Ok(updated)
 }
 
+/// Re-register the global hotkey at runtime. Called after the user saves a new hotkey in Settings.
+#[tauri::command]
+fn update_hotkey(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    new_hotkey: String,
+) -> Result<(), String> {
+    let mut active = state.active_hotkey.lock().map_err(|e| e.to_string())?;
+
+    // Unregister previous shortcut (ignore errors — e.g. it was never registered)
+    if !active.is_empty() {
+        let _ = app.global_shortcut().unregister(active.as_str());
+    }
+
+    let result = app.global_shortcut().on_shortcut(new_hotkey.as_str(), |handle, _, event| {
+        if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+            if let Some(win) = handle.get_webview_window("quick_capture") {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }
+    });
+
+    match result {
+        Ok(_) => {
+            app_log(&format!("热键更新成功: {}", new_hotkey));
+            *active = new_hotkey;
+            Ok(())
+        }
+        Err(e) => {
+            app_log(&format!("热键更新失败: {:?}", e));
+            Err(format!("快捷键「{}」已被其他应用占用，请换一个", new_hotkey))
+        }
+    }
+}
+
+/// Enable or disable launch-at-login. Returns Err with a human-readable message on failure.
+#[tauri::command]
+fn set_autostart(app: tauri::AppHandle, enable: bool) -> Result<(), String> {
+    let mgr = app.autolaunch();
+    let result = if enable {
+        mgr.enable()
+    } else {
+        mgr.disable()
+    };
+    result.map_err(|e| {
+        app_log(&format!("开机启动设置失败 (enable={}): {:?}", enable, e));
+        format!("开机启动设置失败: {}", e)
+    })
+}
+
 fn main() {
     init_logging();
 
@@ -270,6 +325,15 @@ fn main() {
     app_log("开始构建 Tauri app...");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            // A second instance was launched — focus the existing window instead
+            app_log("检测到重复启动，聚焦已有窗口");
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![])))
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
@@ -294,11 +358,10 @@ fn main() {
             app.manage(AppState {
                 config,
                 thoughts: RwLock::new(repo),
+                active_hotkey: Mutex::new(String::new()),
             });
 
             app_log("注册全局快捷键...");
-            // Register global shortcut: show only the dedicated quick-capture popup.
-            // The main window is never touched — it stays hidden/visible as-is.
             let shortcut_result = app.global_shortcut().on_shortcut(hotkey.as_str(), |handle, _, event| {
                 if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                     if let Some(win) = handle.get_webview_window("quick_capture") {
@@ -308,15 +371,31 @@ fn main() {
                 }
             });
             match shortcut_result {
-                Ok(_) => app_log(&format!("全局快捷键 {} 注册成功", hotkey)),
+                Ok(_) => {
+                    app_log(&format!("全局快捷键 {} 注册成功", hotkey));
+                    // Record the successfully-registered hotkey so update_hotkey can unregister it later
+                    if let Ok(mut active) = app.state::<AppState>().active_hotkey.lock() {
+                        *active = hotkey.clone();
+                    }
+                }
                 Err(e) => {
-                    // Don't crash — the app still works via tray icon.
-                    // User can change the hotkey in Settings to avoid the conflict.
                     app_log(&format!(
                         "警告: 全局快捷键 {} 注册失败（已被其他应用占用）: {:?}",
                         hotkey, e
                     ));
                     app_log("提示: 请在「设置」中更改快捷键（例如改为 Alt+T 或 Control+Shift+T）");
+                }
+            }
+
+            // Apply saved auto-launch preference on every startup
+            {
+                let cfg = app.state::<AppState>().config.get_config();
+                if cfg.auto_launch {
+                    let mgr = app.autolaunch();
+                    match mgr.enable() {
+                        Ok(_) => app_log("开机启动已启用"),
+                        Err(e) => app_log(&format!("开机启动启用失败: {:?}", e)),
+                    }
                 }
             }
 
@@ -392,6 +471,8 @@ fn main() {
             thought_delete,
             tag_remove,
             ai_summarize,
+            update_hotkey,
+            set_autostart,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

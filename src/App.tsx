@@ -242,6 +242,7 @@ export default function App() {
   const [allThoughtsForTags, setAllThoughtsForTags] = useState<Thought[]>([]);
   const [settingsForm, setSettingsForm] = useState<AppConfig | null>(null);
   const [settingsSaveStatus, setSettingsSaveStatus] = useState<"idle" | "success">("idle");
+  const [settingsError, setSettingsError] = useState<string | null>(null);
   const [showQuickCapture, setShowQuickCapture] = useState(false);
   const [quickThought, setQuickThought] = useState("");
   const [quickSaveStatus, setQuickSaveStatus] = useState<"idle" | "success">("idle");
@@ -372,8 +373,16 @@ export default function App() {
     setShowQuickCapture(false);
   }, []);
 
+  // If the user navigates to settings before config finishes loading, fill the form once it arrives
+  useEffect(() => {
+    if (view === "settings" && config && !settingsForm) {
+      setSettingsForm({ ...config, llm: { ...config.llm } });
+    }
+  }, [view, config, settingsForm]);
+
   const handleNavClick = (newView: AppView) => {
     setView(newView);
+    setSettingsError(null);
     if (newView === "settings" && config) {
       setSettingsForm({ ...config, llm: { ...config.llm } });
     }
@@ -404,6 +413,34 @@ export default function App() {
 
   const saveSettings = async () => {
     if (!settingsForm) return;
+    setSettingsError(null);
+
+    // Re-register hotkey immediately if it changed
+    if (config && settingsForm.hotkey !== config.hotkey) {
+      try {
+        await api.updateHotkey(settingsForm.hotkey);
+      } catch (e) {
+        setSettingsError(String(e));
+        return;
+      }
+    }
+
+    // Apply autostart OS setting if it changed
+    if (config && settingsForm.autoLaunch !== config.autoLaunch) {
+      try {
+        await api.setAutostart(settingsForm.autoLaunch);
+      } catch (e) {
+        setSettingsError(
+          settingsForm.autoLaunch
+            ? `开机启动设置失败：${String(e)}`
+            : `取消开机启动失败：${String(e)}`
+        );
+        // Revert the checkbox — keep other changes
+        setSettingsForm((p) => (p ? { ...p, autoLaunch: config.autoLaunch } : p));
+        return;
+      }
+    }
+
     const updated = await api.updateConfig(settingsForm);
     setConfig(updated);
     setSettingsForm({ ...updated, llm: { ...updated.llm } });
@@ -830,6 +867,9 @@ export default function App() {
           </>
         )}
 
+        {view === "settings" && !settingsForm && (
+          <div className="settings-loading">加载中…</div>
+        )}
         {view === "settings" && settingsForm && (
           <div className="settings-view">
             <div className="settings-header">
@@ -989,6 +1029,9 @@ export default function App() {
             </div>
 
             <div className="settings-footer">
+              {settingsError && (
+                <div className="settings-error">{settingsError}</div>
+              )}
               <button
                 type="button"
                 className={`btn-save ${settingsSaveStatus === "success" ? "success" : ""}`}

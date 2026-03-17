@@ -72,7 +72,7 @@ pub struct GroupedThoughts {
 
 fn default_config() -> AppConfig {
     AppConfig {
-        hotkey: "Control+T".to_string(),
+        hotkey: "Alt+T".to_string(),
         auto_launch: false,
         llm_enabled: false,
         theme: "light".to_string(),
