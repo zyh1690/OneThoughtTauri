@@ -243,6 +243,7 @@ export default function App() {
   const [settingsForm, setSettingsForm] = useState<AppConfig | null>(null);
   const [settingsSaveStatus, setSettingsSaveStatus] = useState<"idle" | "success">("idle");
   const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [configLoadError, setConfigLoadError] = useState<string | null>(null);
   const [showQuickCapture, setShowQuickCapture] = useState(false);
   const [quickThought, setQuickThought] = useState("");
   const [quickSaveStatus, setQuickSaveStatus] = useState<"idle" | "success">("idle");
@@ -343,10 +344,23 @@ export default function App() {
 
   // Register event listeners ONCE — use reloadRef so they never go stale
   useEffect(() => {
-    void api.getConfig().then((cfg) => {
-      setConfig(cfg);
-      setSettingsForm(cfg);
-    });
+    // 5-second timeout: if config never arrives, show a diagnostic error
+    const timeoutId = setTimeout(() => {
+      setConfigLoadError("配置加载超时（超过 5 秒未响应）。请检查 onethought.log 日志文件排查原因。");
+    }, 5000);
+
+    api.getConfig()
+      .then((cfg) => {
+        clearTimeout(timeoutId);
+        setConfig(cfg);
+        setSettingsForm(cfg);
+      })
+      .catch((err: unknown) => {
+        clearTimeout(timeoutId);
+        const msg = err instanceof Error ? err.message : String(err);
+        setConfigLoadError(`配置加载失败：${msg}。请检查 onethought.log 日志文件。`);
+      });
+
     const unlistens: Array<() => void> = [];
     api.onThoughtUpdated(() => void reloadRef.current()).then((fn) => unlistens.push(fn));
     api.onShowQuickCapture(() => {
@@ -870,7 +884,11 @@ export default function App() {
         )}
 
         {view === "settings" && !settingsForm && (
-          <div className="settings-loading">加载中…</div>
+          <div className="settings-loading">
+            {configLoadError
+              ? <span className="settings-load-error">⚠️ {configLoadError}</span>
+              : "加载中…"}
+          </div>
         )}
         {view === "settings" && settingsForm && (
           <div className="settings-view">

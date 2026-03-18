@@ -59,13 +59,22 @@ struct AppState {
 
 fn ensure_dir(p: &std::path::Path) {
     if !p.exists() {
-        let _ = std::fs::create_dir_all(p);
+        match std::fs::create_dir_all(p) {
+            Ok(_) => app_log(&format!("[ensure_dir] 创建目录成功: {:?}", p)),
+            Err(e) => app_log(&format!("[ensure_dir] 创建目录失败: {:?} — {}", p, e)),
+        }
     }
 }
 
 #[tauri::command]
-fn config_get(state: tauri::State<AppState>) -> AppConfig {
-    state.config.get_config()
+fn config_get(state: tauri::State<AppState>) -> Result<AppConfig, String> {
+    app_log("[config_get] 开始读取配置...");
+    let cfg = state.config.get_config();
+    app_log(&format!(
+        "[config_get] 读取成功: hotkey={:?} llm_mode={:?} llm_enabled={}",
+        cfg.hotkey, cfg.llm_mode, cfg.llm_enabled
+    ));
+    Ok(cfg)
 }
 
 #[tauri::command]

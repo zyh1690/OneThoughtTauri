@@ -1158,6 +1158,14 @@ body {
   height: 120px;
   color: var(--text-secondary);
   font-size: 14px;
+  padding: 0 24px;
+}
+
+.settings-load-error {
+  color: var(--danger, #c0392b);
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
 }
 
 /* ─── QuickCapture standalone window ────────────────────── */
