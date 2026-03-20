@@ -359,17 +359,29 @@ fn main() {
         app_log(&format!("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER env = {:?}", wv2_env));
 
         if wv2_env.is_empty() {
-            // Auto-detect a "webview2" folder placed next to the exe
+            // Auto-detect a "webview2" / "WebView2" folder placed next to the exe
+            let mut found = false;
             if let Ok(exe) = std::env::current_exe() {
                 if let Some(dir) = exe.parent() {
                     for candidate in &["webview2", "WebView2"] {
                         let p = dir.join(candidate);
                         if p.join("msedgewebview2.exe").exists() {
                             app_log(&format!("自动检测到 WebView2 固定版: {:?}", p));
+                            // Must be set before Tauri builder creates the WebView
                             std::env::set_var("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", &p);
+                            found = true;
                             break;
                         }
                     }
+                    if !found {
+                        app_log("未检测到 WebView2 固定版目录，将使用系统已安装的 WebView2");
+                    }
+
+                    // For portable mode: store WebView2 profile data next to the exe
+                    // so the app doesn't require AppData write permission
+                    let data_folder = exe.parent().unwrap_or(std::path::Path::new(".")).join("WebView2Data");
+                    app_log(&format!("WebView2 用户数据目录 (WEBVIEW2_USER_DATA_FOLDER): {:?}", data_folder));
+                    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &data_folder);
                 }
             }
         } else {
@@ -377,12 +389,21 @@ fn main() {
             app_log(&format!("msedgewebview2.exe 是否存在: {}", msedge.exists()));
             if !msedge.exists() {
                 app_log("警告: msedgewebview2.exe 不存在，请检查 WebView2 路径是否正确！");
-                // 列出目录内容帮助排查
                 if let Ok(entries) = std::fs::read_dir(&wv2_env) {
                     let names: Vec<_> = entries
                         .filter_map(|e| e.ok().map(|e| e.file_name()))
                         .collect();
                     app_log(&format!("目录内容: {:?}", names));
+                }
+            } else {
+                // Env var was set externally (e.g. launch script); also redirect user data
+                let data_folder = std::path::Path::new(&wv2_env)
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .join("WebView2Data");
+                if std::env::var("WEBVIEW2_USER_DATA_FOLDER").unwrap_or_default().is_empty() {
+                    app_log(&format!("WebView2 用户数据目录 (auto): {:?}", data_folder));
+                    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &data_folder);
                 }
             }
         }
@@ -514,14 +535,36 @@ fn main() {
                 .build(app)?;
 
             // Intercept close button: hide to tray instead of quitting
+            // Log all window events to diagnose first-run visibility issues
             let main_win = app.get_webview_window("main").unwrap();
             let main_win_clone = main_win.clone();
             main_win.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = main_win_clone.hide();
+                match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } => {
+                        app_log("[main_win] CloseRequested → 拦截并隐藏到托盘");
+                        api.prevent_close();
+                        let _ = main_win_clone.hide();
+                    }
+                    tauri::WindowEvent::Focused(focused) => {
+                        app_log(&format!("[main_win] Focused={}", focused));
+                    }
+                    tauri::WindowEvent::Destroyed => {
+                        app_log("[main_win] Destroyed（窗口被销毁）");
+                    }
+                    tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                        app_log(&format!("[main_win] ScaleFactorChanged: {:.2}", scale_factor));
+                    }
+                    _ => {}
                 }
             });
+
+            // Explicitly show and focus the main window after all setup is done.
+            // This handles cases where WebView2 initialization delays the first paint
+            // or a CloseRequested was fired during startup on Windows.
+            app_log("[main_win] setup 完成，调用 show() + set_focus()...");
+            let _ = main_win.show();
+            let _ = main_win.set_focus();
+            app_log("[main_win] show() + set_focus() 调用完毕");
 
             app_log("Tauri setup 完成 ✓");
             Ok(())
