@@ -4,6 +4,10 @@
 
 **现有 Electron 工程保持不变**，本目录为独立新工程，可在此逐步迁移功能。
 
+开发过程中遇到的典型问题与解决思路已整理为文档，便于回顾学习：
+
+- **[docs/开发问题与经验记录.md](./docs/开发问题与经验记录.md)**
+
 ## 环境要求
 
 - Node.js 18+
@@ -67,6 +71,7 @@ npm run release
 
 ```text
 one_thought_tauri/
+├── docs/                # 开发笔记与问题记录
 ├── src/                 # React 前端（Vite）
 ├── src-tauri/           # Tauri 2 后端（Rust）
 │   ├── src/main.rs
