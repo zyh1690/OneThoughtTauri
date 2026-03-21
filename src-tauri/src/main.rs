@@ -66,6 +66,47 @@ fn ensure_dir(p: &std::path::Path) {
     }
 }
 
+/// Windows: try to use `folder` for WebView2 user data; returns true if writable.
+#[cfg(target_os = "windows")]
+fn try_use_webview2_user_data_folder(folder: &std::path::Path, label: &str) -> bool {
+    if std::fs::create_dir_all(folder).is_err() {
+        app_log(&format!(
+            "[WebView2] {} 无法创建 {:?}，跳过该路径",
+            label, folder
+        ));
+        return false;
+    }
+    let test = folder.join(".onethought_write_test");
+    match std::fs::File::create(&test) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&test);
+            std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", folder);
+            app_log(&format!(
+                "[WebView2] {} 已设置 WEBVIEW2_USER_DATA_FOLDER = {:?}",
+                label, folder
+            ));
+            true
+        }
+        Err(e) => {
+            app_log(&format!(
+                "[WebView2] {} 目录 {:?} 不可写: {}",
+                label, folder, e
+            ));
+            false
+        }
+    }
+}
+
+/// Fallback when exe lives under Program Files (installed MSI/NSIS): user-writable AppData path.
+#[cfg(target_os = "windows")]
+fn webview2_user_data_fallback() -> std::path::PathBuf {
+    std::env::var("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join("com.onethought.tauri")
+        .join("WebView2Data")
+}
+
 #[tauri::command]
 fn config_get(state: tauri::State<AppState>) -> Result<AppConfig, String> {
     app_log("[config_get] 开始读取配置...");
@@ -352,36 +393,51 @@ fn set_autostart(app: tauri::AppHandle, enable: bool) -> Result<(), String> {
 fn main() {
     init_logging();
 
-    // ── Windows: WebView2 Fixed Version detection ────────────────────────────
+    // ── Windows: WebView2 Fixed Version + user data directory ────────────────
+    // Never force WEBVIEW2_USER_DATA_FOLDER under Program Files — normal users cannot write there.
+    // System WebView2: omit WEBVIEW2_USER_DATA_FOLDER (Edge uses default under %LOCALAPPDATA%).
+    // Fixed-version / portable: prefer exe_dir/WebView2Data if writable; else %LOCALAPPDATA%\...\WebView2Data.
     #[cfg(target_os = "windows")]
     {
         let wv2_env = std::env::var("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER").unwrap_or_default();
         app_log(&format!("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER env = {:?}", wv2_env));
 
+        let user_data_already = !std::env::var("WEBVIEW2_USER_DATA_FOLDER")
+            .unwrap_or_default()
+            .is_empty();
+        if user_data_already {
+            app_log(&format!(
+                "[WebView2] 已存在 WEBVIEW2_USER_DATA_FOLDER = {:?}，沿用用户/脚本设置",
+                std::env::var("WEBVIEW2_USER_DATA_FOLDER").ok()
+            ));
+        }
+
+        let mut using_fixed_runtime = false;
+
         if wv2_env.is_empty() {
-            // Auto-detect a "webview2" / "WebView2" folder placed next to the exe
-            let mut found = false;
             if let Ok(exe) = std::env::current_exe() {
-                if let Some(dir) = exe.parent() {
+                if let Some(exe_dir) = exe.parent() {
                     for candidate in &["webview2", "WebView2"] {
-                        let p = dir.join(candidate);
+                        let p = exe_dir.join(candidate);
                         if p.join("msedgewebview2.exe").exists() {
-                            app_log(&format!("自动检测到 WebView2 固定版: {:?}", p));
-                            // Must be set before Tauri builder creates the WebView
+                            app_log(&format!("[WebView2] 自动检测到固定版运行时: {:?}", p));
                             std::env::set_var("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", &p);
-                            found = true;
+                            using_fixed_runtime = true;
                             break;
                         }
                     }
-                    if !found {
-                        app_log("未检测到 WebView2 固定版目录，将使用系统已安装的 WebView2");
+                    if !using_fixed_runtime {
+                        app_log("[WebView2] 未检测到固定版目录，使用系统已安装的 WebView2 Runtime");
                     }
 
-                    // For portable mode: store WebView2 profile data next to the exe
-                    // so the app doesn't require AppData write permission
-                    let data_folder = exe.parent().unwrap_or(std::path::Path::new(".")).join("WebView2Data");
-                    app_log(&format!("WebView2 用户数据目录 (WEBVIEW2_USER_DATA_FOLDER): {:?}", data_folder));
-                    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &data_folder);
+                    // Only override user data when using fixed runtime (portable) — and only if writable.
+                    if using_fixed_runtime && !user_data_already {
+                        let portable_data = exe_dir.join("WebView2Data");
+                        if !try_use_webview2_user_data_folder(&portable_data, "便携目录") {
+                            let fb = webview2_user_data_fallback();
+                            let _ = try_use_webview2_user_data_folder(&fb, "AppData 回退");
+                        }
+                    }
                 }
             }
         } else {
@@ -396,14 +452,16 @@ fn main() {
                     app_log(&format!("目录内容: {:?}", names));
                 }
             } else {
-                // Env var was set externally (e.g. launch script); also redirect user data
-                let data_folder = std::path::Path::new(&wv2_env)
-                    .parent()
-                    .unwrap_or(std::path::Path::new("."))
-                    .join("WebView2Data");
-                if std::env::var("WEBVIEW2_USER_DATA_FOLDER").unwrap_or_default().is_empty() {
-                    app_log(&format!("WebView2 用户数据目录 (auto): {:?}", data_folder));
-                    std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &data_folder);
+                using_fixed_runtime = true;
+                if !user_data_already {
+                    let portable_data = std::path::Path::new(&wv2_env)
+                        .parent()
+                        .unwrap_or(std::path::Path::new("."))
+                        .join("WebView2Data");
+                    if !try_use_webview2_user_data_folder(&portable_data, "固定版旁目录") {
+                        let fb = webview2_user_data_fallback();
+                        let _ = try_use_webview2_user_data_folder(&fb, "AppData 回退");
+                    }
                 }
             }
         }
