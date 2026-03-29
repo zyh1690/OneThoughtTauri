@@ -30,11 +30,26 @@ export default function QuickCapture() {
     await Window.getByLabel("quick_capture").then((win) => win?.hide());
   }, []);
 
-  useEffect(() => {
+  const refreshTags = useCallback(() => {
     void api.listAllThoughts().then(setAllThoughts);
+  }, []);
+
+  useEffect(() => {
+    refreshTags();
     const t = setTimeout(() => textareaRef.current?.focus(), 50);
     return () => clearTimeout(t);
-  }, []);
+  }, [refreshTags]);
+
+  // Keep tag chips in sync with main window (same as App.tsx via thought_updated)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void api.onThoughtUpdated(refreshTags).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, [refreshTags]);
 
   // Global Escape listener — catches Esc even when textarea is not focused.
   // Necessary on Windows where focus timing can differ from macOS.
@@ -75,12 +90,18 @@ export default function QuickCapture() {
     ro.observe(card);
 
     // Use Tauri's onFocusChanged — fires reliably when Rust calls win.set_focus().
-    // This is the primary trigger: every hotkey press shows + focuses the window,
-    // so at that moment layout is fully computed and getBoundingClientRect() is accurate.
+    // Refresh tags (sync with main window) + refit height when the popup is shown.
     let unlisten: (() => void) | undefined;
     void getCurrentWindow()
-      .onFocusChanged(({ payload: focused }) => { if (focused) fitHeight(); })
-      .then((fn) => { unlisten = fn; });
+      .onFocusChanged(({ payload: focused }) => {
+        if (focused) {
+          refreshTags();
+          fitHeight();
+        }
+      })
+      .then((fn) => {
+        unlisten = fn;
+      });
 
     // Fallback: retry every 200ms until we get a non-zero height (covers the case
     // where the hidden window's layout IS computed before first focus).
@@ -97,7 +118,7 @@ export default function QuickCapture() {
       unlisten?.();
       clearTimeout(timer);
     };
-  }, []);
+  }, [refreshTags]);
 
   const submit = async () => {
     if (!thought.trim()) return;
