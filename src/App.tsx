@@ -328,7 +328,8 @@ export default function App() {
     const options = {
       viewMode: "day" as const,
       archived: isArchive,
-      tags: selectedTag ? [selectedTag] : undefined,
+      // Archive view should ignore tag filters.
+      tags: !isArchive && selectedTag ? [selectedTag] : undefined,
       from,
       to,
     };
