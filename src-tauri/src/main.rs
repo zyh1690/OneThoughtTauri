@@ -4,7 +4,10 @@ mod store;
 
 use std::io::Write as _;
 use std::sync::{Mutex, RwLock};
-use store::{AppConfig, ConfigStore, GroupedThoughts, QueryOptions, Thought, ThoughtRepository};
+use store::{
+    AppConfig, ConfigStore, GroupedThoughts, QueryOptions, TagMetadata, Thought,
+    ThoughtRepository,
+};
 use tauri::{Emitter, Manager};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -189,6 +192,12 @@ fn thought_list_all(state: tauri::State<AppState>) -> Result<Vec<Thought>, Strin
 }
 
 #[tauri::command]
+fn tag_metadata(state: tauri::State<AppState>) -> Result<Vec<TagMetadata>, String> {
+    let repo = state.thoughts.read().map_err(|e| e.to_string())?;
+    Ok(repo.tag_metadata())
+}
+
+#[tauri::command]
 fn thought_delete(state: tauri::State<AppState>, app: tauri::AppHandle, id: String) -> Result<bool, String> {
     let mut repo = state.thoughts.write().map_err(|e| e.to_string())?;
     let ok = repo.delete(&id);
@@ -197,6 +206,33 @@ fn thought_delete(state: tauri::State<AppState>, app: tauri::AppHandle, id: Stri
         let _ = app.emit("thought_updated", ());
     }
     Ok(ok)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ThoughtDeleteManyPayload {
+    ids: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeleteManyResult {
+    deleted: usize,
+}
+
+#[tauri::command]
+fn thought_delete_many(
+    state: tauri::State<AppState>,
+    app: tauri::AppHandle,
+    payload: ThoughtDeleteManyPayload,
+) -> Result<DeleteManyResult, String> {
+    let mut repo = state.thoughts.write().map_err(|e| e.to_string())?;
+    let deleted = repo.delete_many(&payload.ids);
+    drop(repo);
+    if deleted > 0 {
+        let _ = app.emit("thought_updated", ());
+    }
+    Ok(DeleteManyResult { deleted })
 }
 
 #[derive(serde::Deserialize)]
@@ -635,7 +671,9 @@ fn main() {
             thought_archive,
             thought_list,
             thought_list_all,
+            tag_metadata,
             thought_delete,
+            thought_delete_many,
             tag_remove,
             ai_summarize,
             update_hotkey,

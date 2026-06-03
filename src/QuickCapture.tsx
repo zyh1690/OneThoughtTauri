@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Window, LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
 import * as api from "./api";
-import type { Thought } from "./types";
+import type { TagMetadata } from "./types";
 import { extractTagsFromContent } from "./utils/tags";
+import { applyTagSuggestion, getTagSuggestions } from "./utils/tagSuggestions";
 
 const TAG_COLORS = ["0", "1", "2", "3", "4"] as const;
 function tagColorIndex(tag: string, allTags: string[]): string {
@@ -14,15 +15,13 @@ export default function QuickCapture() {
   const [thought, setThought] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "success">("idle");
   const [tagSuggestionIndex, setTagSuggestionIndex] = useState(0);
-  const [allThoughts, setAllThoughts] = useState<Thought[]>([]);
+  const [tagMetadata, setTagMetadata] = useState<TagMetadata[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
 
   const allTags = useMemo(() => {
-    const set = new Set<string>();
-    allThoughts.forEach((t) => t.tags.forEach((tag) => set.add(tag)));
-    return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  }, [allThoughts]);
+    return tagMetadata.map((tag) => tag.name);
+  }, [tagMetadata]);
 
   const close = useCallback(async () => {
     setThought("");
@@ -31,7 +30,7 @@ export default function QuickCapture() {
   }, []);
 
   const refreshTags = useCallback(() => {
-    void api.listAllThoughts().then(setAllThoughts);
+    void api.listTagMetadata().then(setTagMetadata);
   }, []);
 
   useEffect(() => {
@@ -128,19 +127,14 @@ export default function QuickCapture() {
     setTimeout(() => void close(), 700);
   };
 
-  const hashMatch = thought.match(/#([^\s#]*)$/u);
-  const prefix = hashMatch ? hashMatch[1] : "";
-  const prefixLower = prefix.toLowerCase();
-  const suggestions: string[] = hashMatch
-    ? prefixLower
-      ? allTags.filter((t) => t.toLowerCase().startsWith(prefixLower))
-      : allTags.slice(0, 10)
-    : allTags.slice(0, 15);
-  if (hashMatch && prefix && !suggestions.includes(prefix)) suggestions.unshift(prefix);
+  const tagSuggestionState = useMemo(
+    () => getTagSuggestions(thought, allTags, tagSuggestionIndex),
+    [thought, allTags, tagSuggestionIndex]
+  );
+  const { hashMatch, prefix, suggestions, selectedIndex } = tagSuggestionState;
 
   const applySuggestion = (tag: string) => {
-    const before = hashMatch ? thought.replace(/#[^\s#]*$/u, "") : thought;
-    setThought((before === "" ? before : before + " ") + "#" + tag + " ");
+    setThought(applyTagSuggestion(thought, tag));
     setTagSuggestionIndex(0);
     textareaRef.current?.focus();
   };
@@ -182,9 +176,9 @@ export default function QuickCapture() {
                 return;
               }
               if (e.key === "Enter") {
-                if (hashMatch && suggestions.length > 0 && suggestions[tagSuggestionIndex]) {
+                if (hashMatch && suggestions.length > 0 && suggestions[selectedIndex]) {
                   e.preventDefault();
-                  applySuggestion(suggestions[tagSuggestionIndex]);
+                  applySuggestion(suggestions[selectedIndex]);
                 } else if (e.shiftKey) {
                   // allow newline
                 } else {
@@ -202,7 +196,7 @@ export default function QuickCapture() {
                   key={tag}
                   type="button"
                   role="option"
-                  className={`qc-tag-chip ${i === tagSuggestionIndex ? "selected" : ""}`}
+                  className={`qc-tag-chip ${i === selectedIndex ? "selected" : ""}`}
                   data-color={tagColorIndex(tag, allTags)}
                   onClick={() => applySuggestion(tag)}
                 >

@@ -72,6 +72,15 @@ pub struct GroupedThoughts {
     pub items: Vec<Thought>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TagMetadata {
+    pub name: String,
+    pub active_count: usize,
+    pub archived_count: usize,
+    pub total_count: usize,
+}
+
 fn default_config() -> AppConfig {
     AppConfig {
         hotkey: "Alt+T".to_string(),
@@ -239,6 +248,32 @@ impl ThoughtRepository {
         v
     }
 
+    pub fn tag_metadata(&self) -> Vec<TagMetadata> {
+        let mut tags: HashMap<&str, (usize, usize)> = HashMap::new();
+        for thought in self.thoughts.values() {
+            for tag in &thought.tags {
+                let entry = tags.entry(tag.as_str()).or_insert((0, 0));
+                if thought.archived {
+                    entry.1 += 1;
+                } else {
+                    entry.0 += 1;
+                }
+            }
+        }
+
+        let mut out: Vec<_> = tags
+            .into_iter()
+            .map(|(name, (active_count, archived_count))| TagMetadata {
+                name: name.to_string(),
+                active_count,
+                archived_count,
+                total_count: active_count + archived_count,
+            })
+            .collect();
+        out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        out
+    }
+
     pub fn query_grouped(&self, options: &QueryOptions) -> Vec<GroupedThoughts> {
         let from_ts = options
             .from
@@ -259,52 +294,48 @@ impl ThoughtRepository {
             .iter()
             .cloned()
             .collect();
-        let mut matched: Vec<Thought> = self
-            .thoughts
-            .values()
-            .filter(|item| {
-                let ts = chrono::DateTime::parse_from_rfc3339(&item.created_at)
-                    .map(|t| t.timestamp_millis())
-                    .unwrap_or(0);
-                if ts < from_ts || ts > to_ts {
-                    return false;
-                }
-                if let Some(archived) = options.archived {
-                    if item.archived != archived {
-                        return false;
-                    }
-                }
-                if !tags.is_empty() && !item.tags.iter().any(|t| tags.contains(t)) {
-                    return false;
-                }
-                true
-            })
-            .cloned()
-            .collect();
-        matched.sort_by(|a, b| b.created_at.cmp(&a.created_at));
-
         let view_month = options.view_mode == "month";
-        let mut grouped: HashMap<String, Vec<Thought>> = HashMap::new();
-        for item in matched {
-            let dt = chrono::DateTime::parse_from_rfc3339(&item.created_at).unwrap_or(Utc::now().into());
+        let mut matched: Vec<(i64, String, &Thought)> = Vec::new();
+
+        for item in self.thoughts.values() {
+            let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&item.created_at) else {
+                continue;
+            };
+            let ts = dt.timestamp_millis();
+            if ts < from_ts || ts > to_ts {
+                continue;
+            }
+            if let Some(archived) = options.archived {
+                if item.archived != archived {
+                    continue;
+                }
+            }
+            if !tags.is_empty() && !item.tags.iter().any(|t| tags.contains(t)) {
+                continue;
+            }
+
             let key = if view_month {
                 format!("{:04}-{:02}", dt.year(), dt.month())
             } else {
-                format!(
-                    "{:04}-{:02}-{:02}",
-                    dt.year(),
-                    dt.month(),
-                    dt.day()
-                )
+                format!("{:04}-{:02}-{:02}", dt.year(), dt.month(), dt.day())
             };
-            grouped.entry(key).or_default().push(item);
+            matched.push((ts, key, item));
         }
+
+        matched.sort_by(|a, b| b.0.cmp(&a.0));
+
+        let offset = options.offset.unwrap_or(0) as usize;
+        let limit = options.limit.map(|n| n as usize).unwrap_or(usize::MAX);
+        let mut grouped: HashMap<String, Vec<Thought>> = HashMap::new();
+        for (_, group_key, item) in matched.into_iter().skip(offset).take(limit) {
+            grouped.entry(group_key).or_default().push(item.clone());
+        }
+
         let mut keys: Vec<_> = grouped.keys().cloned().collect();
         keys.sort_by(|a, b| b.cmp(a));
         keys.into_iter()
             .map(|group_key| {
-                let mut items = grouped.remove(&group_key).unwrap_or_default();
-                items.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+                let items = grouped.remove(&group_key).unwrap_or_default();
                 GroupedThoughts { group_key, items }
             })
             .collect()
@@ -317,6 +348,19 @@ impl ThoughtRepository {
         } else {
             false
         }
+    }
+
+    pub fn delete_many(&mut self, ids: &[String]) -> usize {
+        let mut deleted = 0usize;
+        for id in ids {
+            if self.thoughts.remove(id).is_some() {
+                deleted += 1;
+            }
+        }
+        if deleted > 0 {
+            self.compact();
+        }
+        deleted
     }
 
     pub fn remove_tag(&mut self, tag_name: &str) -> bool {
@@ -356,5 +400,161 @@ impl ThoughtRepository {
             let _ = f.sync_all();
         }
         let _ = fs::rename(&tmp, &self.thoughts_file);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    fn temp_store_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("onethought-{name}-{}.jsonl", Uuid::new_v4()))
+    }
+
+    fn thought(id: &str, created_at: &str, archived: bool, tags: &[&str]) -> Thought {
+        Thought {
+            id: id.to_string(),
+            content: format!("content-{id}"),
+            created_at: created_at.to_string(),
+            updated_at: created_at.to_string(),
+            status: "active".to_string(),
+            archived,
+            tags: tags.iter().map(|tag| tag.to_string()).collect(),
+            source: "main_ui".to_string(),
+            pinned: false,
+            summary_id: None,
+            meta: ThoughtMeta {
+                device: "test".to_string(),
+                app_version: "0.1.0".to_string(),
+            },
+        }
+    }
+
+    fn repo_with(thoughts: Vec<Thought>) -> ThoughtRepository {
+        let mut repo = ThoughtRepository {
+            thoughts_file: temp_store_path("repo"),
+            thoughts: HashMap::new(),
+        };
+        for item in thoughts {
+            repo.thoughts.insert(item.id.clone(), item);
+        }
+        repo
+    }
+
+    #[test]
+    fn tag_metadata_counts_without_full_thought_payloads() {
+        let repo = repo_with(vec![
+            thought("1", "2026-06-01T09:00:00Z", false, &["work", "rust"]),
+            thought("2", "2026-06-01T10:00:00Z", true, &["work"]),
+            thought("3", "2026-06-01T11:00:00Z", false, &["rust"]),
+        ]);
+
+        let metadata = repo.tag_metadata();
+
+        assert_eq!(
+            metadata,
+            vec![
+                TagMetadata {
+                    name: "rust".to_string(),
+                    active_count: 2,
+                    archived_count: 0,
+                    total_count: 2,
+                },
+                TagMetadata {
+                    name: "work".to_string(),
+                    active_count: 1,
+                    archived_count: 1,
+                    total_count: 2,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn grouped_query_preserves_order_and_applies_limit() {
+        let repo = repo_with(vec![
+            thought("old", "2026-05-30T08:00:00Z", false, &["work"]),
+            thought("middle", "2026-06-01T09:00:00Z", false, &["work"]),
+            thought("new", "2026-06-02T10:00:00Z", false, &["work"]),
+            thought("archived", "2026-06-03T10:00:00Z", true, &["work"]),
+        ]);
+
+        let groups = repo.query_grouped(&QueryOptions {
+            view_mode: "day".to_string(),
+            from: None,
+            to: None,
+            archived: Some(false),
+            tags: Some(vec!["work".to_string()]),
+            limit: Some(2),
+            offset: Some(0),
+        });
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].group_key, "2026-06-02");
+        assert_eq!(groups[0].items[0].id, "new");
+        assert_eq!(groups[1].group_key, "2026-06-01");
+        assert_eq!(groups[1].items[0].id, "middle");
+    }
+
+    #[test]
+    fn delete_many_compacts_once_and_preserves_jsonl_compatibility() {
+        let path = temp_store_path("delete-many");
+        let mut repo = ThoughtRepository {
+            thoughts_file: path.clone(),
+            thoughts: HashMap::new(),
+        };
+        for item in [
+            thought("1", "2026-06-01T09:00:00Z", false, &["work"]),
+            thought("2", "2026-06-01T10:00:00Z", true, &["work"]),
+            thought("3", "2026-06-01T11:00:00Z", true, &["rust"]),
+        ] {
+            repo.thoughts.insert(item.id.clone(), item);
+        }
+        repo.compact();
+
+        let deleted = repo.delete_many(&["2".to_string(), "3".to_string()]);
+        let reloaded = ThoughtRepository::load(path.clone());
+        let _ = fs::remove_file(path);
+
+        assert_eq!(deleted, 2);
+        assert_eq!(reloaded.get_all().len(), 1);
+        assert_eq!(reloaded.get_all()[0].id, "1");
+    }
+
+    #[test]
+    fn large_dataset_validation_exercises_optimized_paths() {
+        let mut items = Vec::with_capacity(5_000);
+        for i in 0..5_000 {
+            let day = (i % 28) + 1;
+            let hour = i % 24;
+            let created_at = format!("2026-05-{day:02}T{hour:02}:00:00Z");
+            let archived = i % 7 == 0;
+            let tag = if i % 2 == 0 { "work" } else { "life" };
+            items.push(thought(&format!("t{i}"), &created_at, archived, &[tag]));
+        }
+        let mut repo = repo_with(items);
+
+        let started = Instant::now();
+        let tags = repo.tag_metadata();
+        let groups = repo.query_grouped(&QueryOptions {
+            view_mode: "day".to_string(),
+            from: Some("2026-05-01T00:00:00Z".to_string()),
+            to: Some("2026-05-31T23:59:59Z".to_string()),
+            archived: Some(false),
+            tags: Some(vec!["work".to_string()]),
+            limit: Some(100),
+            offset: Some(0),
+        });
+        let created = repo.create("new item".to_string(), vec!["work".to_string()], "test", "test");
+        let archived = repo.update(&created.id, serde_json::json!({ "archived": true }));
+        let deleted = repo.delete_many(&[created.id]);
+
+        assert_eq!(tags.len(), 2);
+        assert!(!groups.is_empty());
+        assert!(groups.iter().map(|group| group.items.len()).sum::<usize>() <= 100);
+        assert!(archived.as_ref().is_some_and(|item| item.archived));
+        assert_eq!(deleted, 1);
+        assert!(started.elapsed().as_secs() < 5);
     }
 }

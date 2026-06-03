@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import * as api from "./api";
-import type { AppConfig, GroupedThoughts, Thought } from "./types";
+import type { AppConfig, GroupedThoughts, TagMetadata, Thought } from "./types";
 import { extractTagsFromContent } from "./utils/tags";
+import { applyTagSuggestion, getTagSuggestions } from "./utils/tagSuggestions";
 
 /* ─── ConfirmModal ───────────────────────────────────────────── */
 function ConfirmModal({
@@ -220,6 +221,8 @@ function HotkeyInput({ value, onChange }: { value: string; onChange: (v: string)
 }
 
 const TAG_COLORS = ["0", "1", "2", "3", "4"] as const;
+const TIMELINE_LIMIT = 500;
+
 function tagColorIndex(tag: string, allTags: string[]): string {
   const i = allTags.indexOf(tag);
   return TAG_COLORS[i % TAG_COLORS.length];
@@ -239,7 +242,7 @@ export default function App() {
   const [newThought, setNewThought] = useState("");
   const [saveStatus, setSaveStatus] = useState<"idle" | "success">("idle");
   const [tagSuggestionIndex, setTagSuggestionIndex] = useState(0);
-  const [allThoughtsForTags, setAllThoughtsForTags] = useState<Thought[]>([]);
+  const [tagMetadata, setTagMetadata] = useState<TagMetadata[]>([]);
   const [settingsForm, setSettingsForm] = useState<AppConfig | null>(null);
   const [settingsSaveStatus, setSettingsSaveStatus] = useState<"idle" | "success">("idle");
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -261,22 +264,16 @@ export default function App() {
   }, [theme]);
 
   const allTags = useMemo(() => {
-    const set = new Set<string>();
-    allThoughtsForTags.forEach((t) => t.tags.forEach((tag) => set.add(tag)));
-    return [...set].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-  }, [allThoughtsForTags]);
+    return tagMetadata.map((tag) => tag.name);
+  }, [tagMetadata]);
 
   const tagCount = useMemo(() => {
     const count: Record<string, number> = {};
-    allThoughtsForTags
-      .filter((t) => !t.archived)
-      .forEach((t) => {
-        t.tags.forEach((tag) => {
-          count[tag] = (count[tag] ?? 0) + 1;
-        });
-      });
+    tagMetadata.forEach((tag) => {
+      count[tag.name] = tag.activeCount;
+    });
     return count;
-  }, [allThoughtsForTags]);
+  }, [tagMetadata]);
 
   const timeRange = useMemo(() => {
     const now = new Date();
@@ -305,8 +302,8 @@ export default function App() {
   }, [timePreset, customFrom, customTo]);
 
   const reload = useCallback(async () => {
-    const all = await api.listAllThoughts();
-    setAllThoughtsForTags(all);
+    const tags = await api.listTagMetadata();
+    setTagMetadata(tags);
     if (view === "settings") return;
     const isArchive = view === "archive";
 
@@ -332,6 +329,8 @@ export default function App() {
       tags: !isArchive && selectedTag ? [selectedTag] : undefined,
       from,
       to,
+      limit: isArchive ? undefined : TIMELINE_LIMIT,
+      offset: isArchive ? undefined : 0,
     };
     const items = await api.listThoughts(options);
     setGroups(items);
@@ -521,6 +520,15 @@ export default function App() {
     }
   };
 
+  const newThoughtTagSuggestions = useMemo(
+    () => getTagSuggestions(newThought, allTags, tagSuggestionIndex),
+    [newThought, allTags, tagSuggestionIndex]
+  );
+  const quickThoughtTagSuggestions = useMemo(
+    () => getTagSuggestions(quickThought, allTags, quickTagSuggestionIndex),
+    [quickThought, allTags, quickTagSuggestionIndex]
+  );
+
   return (
     <div className={`app-three-col ${view === "archive" ? "no-right-bar" : ""}`}>
       {/* Quick Capture Modal */}
@@ -562,15 +570,7 @@ export default function App() {
                 onKeyDown={(e) => {
                   if (e.nativeEvent.isComposing) return;
 
-                  const hashMatch = quickThought.match(/#([^\s#]*)$/u);
-                  const prefix = hashMatch ? hashMatch[1] : "";
-                  const prefixLower = prefix.toLowerCase();
-                  let suggestions: string[] = hashMatch
-                    ? prefixLower
-                      ? allTags.filter((t) => t.toLowerCase().startsWith(prefixLower))
-                      : allTags.slice(0, 10)
-                    : allTags.slice(0, 15);
-                  if (hashMatch && prefix && !suggestions.includes(prefix)) suggestions = [prefix, ...suggestions];
+                  const { hashMatch, prefix, suggestions, selectedIndex } = quickThoughtTagSuggestions;
 
                   if (e.key === "Escape") { void closeQuickCapture(); return; }
 
@@ -592,11 +592,10 @@ export default function App() {
                     return;
                   }
                   if (e.key === "Enter") {
-                    if (hashMatch && suggestions.length > 0 && suggestions[quickTagSuggestionIndex]) {
+                    if (hashMatch && suggestions.length > 0 && suggestions[selectedIndex]) {
                       e.preventDefault();
-                      const t = suggestions[quickTagSuggestionIndex];
-                      const before = quickThought.replace(/#[^\s#]*$/u, "");
-                      setQuickThought((before === "" ? before : before + " ") + "#" + t + " ");
+                      const t = suggestions[selectedIndex];
+                      setQuickThought(applyTagSuggestion(quickThought, t));
                       setQuickTagSuggestionIndex(0);
                     } else if (e.shiftKey) {
                       // Shift+Enter → 换行，默认行为
@@ -607,29 +606,17 @@ export default function App() {
                   }
                 }}
               />
-              {(() => {
-                const hashMatch = quickThought.match(/#([^\s#]*)$/u);
-                const prefix = hashMatch ? hashMatch[1] : "";
-                const prefixLower = prefix.toLowerCase();
-                let suggestions: string[] = hashMatch
-                  ? prefixLower
-                    ? allTags.filter((t) => t.toLowerCase().startsWith(prefixLower))
-                    : allTags.slice(0, 10)
-                  : allTags.slice(0, 15);
-                if (hashMatch && prefix && !suggestions.includes(prefix)) suggestions = [prefix, ...suggestions];
-                if (suggestions.length === 0) return null;
-                return (
+              {quickThoughtTagSuggestions.suggestions.length > 0 && (
                   <div className="tag-suggestions" role="listbox">
-                    {suggestions.map((t, i) => (
+                    {quickThoughtTagSuggestions.suggestions.map((t, i) => (
                       <button
                         key={t}
                         type="button"
                         role="option"
-                        className={`tag-suggestion-chip ${i === quickTagSuggestionIndex ? "selected" : ""}`}
+                        className={`tag-suggestion-chip ${i === quickThoughtTagSuggestions.selectedIndex ? "selected" : ""}`}
                         data-color={tagColorIndex(t, allTags)}
                         onClick={() => {
-                          const before = hashMatch ? quickThought.replace(/#[^\s#]*$/u, "") : quickThought;
-                          setQuickThought((before === "" ? before : before + " ") + "#" + t + " ");
+                          setQuickThought(applyTagSuggestion(quickThought, t));
                           setQuickTagSuggestionIndex(0);
                           quickTextareaRef.current?.focus();
                         }}
@@ -638,8 +625,7 @@ export default function App() {
                       </button>
                     ))}
                   </div>
-                );
-              })()}
+              )}
             </div>
             <div className="modal-actions">
               <span className="modal-hint">Enter 保存 · Shift+Enter 换行 · Esc 关闭</span>
@@ -755,15 +741,7 @@ export default function App() {
                   placeholder="输入想法，# 添加标签"
                   onKeyDown={(e) => {
                     if (e.nativeEvent.isComposing) return;
-                    const hashMatch = newThought.match(/#([^\s#]*)$/u);
-                    const prefix = hashMatch ? hashMatch[1] : "";
-                    const prefixLower = prefix.toLowerCase();
-                    let suggestions: string[] = hashMatch
-                      ? prefixLower
-                        ? allTags.filter((t) => t.toLowerCase().startsWith(prefixLower))
-                        : allTags.slice(0, 10)
-                      : allTags.slice(0, 15);
-                    if (hashMatch && prefix && !suggestions.includes(prefix)) suggestions = [prefix, ...suggestions];
+                    const { hashMatch, prefix, suggestions, selectedIndex } = newThoughtTagSuggestions;
                     if (suggestions.length === 0) return;
                     if (e.key === "ArrowDown") {
                       e.preventDefault();
@@ -775,11 +753,10 @@ export default function App() {
                       setTagSuggestionIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
                       return;
                     }
-                    if (e.key === "Enter" && hashMatch && suggestions[tagSuggestionIndex]) {
+                    if (e.key === "Enter" && hashMatch && suggestions[selectedIndex]) {
                       e.preventDefault();
-                      const t = suggestions[tagSuggestionIndex];
-                      const before = newThought.replace(/#[^\s#]*$/u, "");
-                      setNewThought((before === "" ? before : before + " ") + "#" + t + " ");
+                      const t = suggestions[selectedIndex];
+                      setNewThought(applyTagSuggestion(newThought, t));
                       setTagSuggestionIndex(0);
                     }
                     if (e.key === " " && hashMatch && prefix) {
@@ -790,29 +767,17 @@ export default function App() {
                     }
                   }}
                 />
-                {(() => {
-                  const hashMatch = newThought.match(/#([^\s#]*)$/u);
-                  const prefix = hashMatch ? hashMatch[1] : "";
-                  const prefixLower = prefix.toLowerCase();
-                  let suggestions: string[] = hashMatch
-                    ? prefixLower
-                      ? allTags.filter((t) => t.toLowerCase().startsWith(prefixLower))
-                      : allTags.slice(0, 10)
-                    : allTags.slice(0, 15);
-                  if (hashMatch && prefix && !suggestions.includes(prefix)) suggestions = [prefix, ...suggestions];
-                  if (suggestions.length === 0) return null;
-                  return (
+                {newThoughtTagSuggestions.suggestions.length > 0 && (
                     <div className="tag-suggestions" role="listbox">
-                      {suggestions.map((t, i) => (
+                      {newThoughtTagSuggestions.suggestions.map((t, i) => (
                         <button
                           key={t}
                           type="button"
                           role="option"
-                          className={`tag-suggestion-chip ${i === tagSuggestionIndex ? "selected" : ""}`}
+                          className={`tag-suggestion-chip ${i === newThoughtTagSuggestions.selectedIndex ? "selected" : ""}`}
                           data-color={tagColorIndex(t, allTags)}
                           onClick={() => {
-                            const before = hashMatch ? newThought.replace(/#[^\s#]*$/u, "") : newThought;
-                            setNewThought((before === "" ? before : before + " ") + "#" + t + " ");
+                            setNewThought(applyTagSuggestion(newThought, t));
                             setTagSuggestionIndex(0);
                           }}
                         >
@@ -820,8 +785,7 @@ export default function App() {
                         </button>
                       ))}
                     </div>
-                  );
-                })()}
+                )}
               </div>
               <div className="input-actions">
                 <button
@@ -856,7 +820,7 @@ export default function App() {
                       confirmLabel: `删除全部 ${total} 条`,
                       onConfirm: () => {
                         const ids = groups.flatMap((g) => g.items.map((t) => t.id));
-                        void Promise.all(ids.map((id) => api.deleteThought(id))).then(() => reload());
+                        void api.deleteThoughts(ids).then(() => reload());
                       },
                     });
                   }}

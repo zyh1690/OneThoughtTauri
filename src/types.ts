@@ -35,6 +35,13 @@ export interface GroupedThoughts {
   items: Thought[];
 }
 
+export interface TagMetadata {
+  name: string;
+  activeCount: number;
+  archivedCount: number;
+  totalCount: number;
+}
+
 export interface AppConfig {
   hotkey: string;
   autoLaunch: boolean;

@@ -2,7 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { AppConfig, GroupedThoughts, QueryOptions, Thought } from "./types";
+import type { AppConfig, GroupedThoughts, QueryOptions, TagMetadata, Thought } from "./types";
 
 export async function getConfig(): Promise<AppConfig> {
   return invoke<AppConfig>("config_get");
@@ -36,8 +36,17 @@ export async function listAllThoughts(): Promise<Thought[]> {
   return invoke<Thought[]>("thought_list_all");
 }
 
+export async function listTagMetadata(): Promise<TagMetadata[]> {
+  return invoke<TagMetadata[]>("tag_metadata");
+}
+
 export async function deleteThought(id: string): Promise<boolean> {
   return invoke<boolean>("thought_delete", { id });
+}
+
+export async function deleteThoughts(ids: string[]): Promise<number> {
+  const result = await invoke<{ deleted: number }>("thought_delete_many", { payload: { ids } });
+  return result.deleted;
 }
 
 export async function removeTag(tagName: string): Promise<boolean> {
