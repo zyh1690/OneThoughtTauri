@@ -20,7 +20,7 @@
         "height": 820,
         "minWidth": 980,
         "minHeight": 640,
-        "visible": true
+        "visible": false
       },
       {
         "label": "quick_capture",

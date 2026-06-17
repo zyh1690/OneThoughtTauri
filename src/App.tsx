@@ -258,7 +258,9 @@ export default function App() {
   const [aiSummary, setAiSummary] = useState("");
   const [aiSummaryStatus, setAiSummaryStatus] = useState<"idle" | "loading" | "error">("idle");
 
-  const theme = config?.theme ?? "light";
+  const theme = view === "settings"
+    ? settingsForm?.theme ?? config?.theme ?? "light"
+    : config?.theme ?? "light";
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
