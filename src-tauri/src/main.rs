@@ -3,6 +3,7 @@
 mod store;
 
 use std::io::Write as _;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, RwLock};
 use store::{
     AppConfig, ConfigStore, GroupedThoughts, QueryOptions, TagMetadata, Thought,
@@ -14,6 +15,8 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri_plugin_global_shortcut::GlobalShortcutExt as _;
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_autostart::ManagerExt as _;
+
+static APP_STATE_READY: AtomicBool = AtomicBool::new(false);
 
 // ── Logging helpers ──────────────────────────────────────────────────────────
 
@@ -108,6 +111,11 @@ fn webview2_user_data_fallback() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
         .join("com.onethought.tauri")
         .join("WebView2Data")
+}
+
+#[tauri::command]
+fn backend_ready() -> bool {
+    APP_STATE_READY.load(Ordering::Acquire)
 }
 
 #[tauri::command]
@@ -541,6 +549,8 @@ fn main() {
                 thoughts: RwLock::new(repo),
                 active_hotkey: Mutex::new(String::new()),
             });
+            APP_STATE_READY.store(true, Ordering::Release);
+            app_log("AppState 已注册，后端命令可用");
 
             app_log("注册全局快捷键...");
             let shortcut_result = app.global_shortcut().on_shortcut(hotkey.as_str(), |handle, _, event| {
@@ -664,6 +674,7 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            backend_ready,
             config_get,
             config_update,
             thought_create,

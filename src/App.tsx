@@ -235,6 +235,8 @@ export default function App() {
   const [view, setView] = useState<AppView>("home");
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [groups, setGroups] = useState<GroupedThoughts[]>([]);
+  const [loadedView, setLoadedView] = useState<AppView | null>(null);
+  const [timelineLoading, setTimelineLoading] = useState(false);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [timePreset, setTimePreset] = useState<TimeRangePreset>("all");
   const [customFrom, setCustomFrom] = useState("");
@@ -303,39 +305,56 @@ export default function App() {
     return { from, to };
   }, [timePreset, customFrom, customTo]);
 
+  const reloadSeqRef = useRef(0);
   const reload = useCallback(async () => {
-    const tags = await api.listTagMetadata();
-    setTagMetadata(tags);
-    if (view === "settings") return;
-    const isArchive = view === "archive";
-
-    // Always use fresh "now" so newly created thoughts (created after last render) are included
-    const now = new Date().toISOString();
-    let from = new Date(0).toISOString();
-    let to = now;
-    if (!isArchive) {
-      if (timePreset === "7") {
-        from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      } else if (timePreset === "30") {
-        from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      } else if (timePreset === "custom") {
-        from = timeRange.from;
-        to = timeRange.to;
-      }
+    const requestId = ++reloadSeqRef.current;
+    const targetView = view;
+    const shouldLoadTimeline = targetView !== "settings";
+    if (shouldLoadTimeline) {
+      setTimelineLoading(true);
     }
 
-    const options = {
-      viewMode: "day" as const,
-      archived: isArchive,
-      // Archive view should ignore tag filters.
-      tags: !isArchive && selectedTag ? [selectedTag] : undefined,
-      from,
-      to,
-      limit: isArchive ? undefined : TIMELINE_LIMIT,
-      offset: isArchive ? undefined : 0,
-    };
-    const items = await api.listThoughts(options);
-    setGroups(items);
+    try {
+      const tags = await api.listTagMetadata();
+      if (requestId !== reloadSeqRef.current) return;
+      setTagMetadata(tags);
+      if (!shouldLoadTimeline) return;
+      const isArchive = targetView === "archive";
+
+      // Always use fresh "now" so newly created thoughts (created after last render) are included
+      const now = new Date().toISOString();
+      let from = new Date(0).toISOString();
+      let to = now;
+      if (!isArchive) {
+        if (timePreset === "7") {
+          from = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+        } else if (timePreset === "30") {
+          from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        } else if (timePreset === "custom") {
+          from = timeRange.from;
+          to = timeRange.to;
+        }
+      }
+
+      const options = {
+        viewMode: "day" as const,
+        archived: isArchive,
+        // Archive view should ignore tag filters.
+        tags: !isArchive && selectedTag ? [selectedTag] : undefined,
+        from,
+        to,
+        limit: isArchive ? undefined : TIMELINE_LIMIT,
+        offset: isArchive ? undefined : 0,
+      };
+      const items = await api.listThoughts(options);
+      if (requestId !== reloadSeqRef.current) return;
+      setGroups(items);
+      setLoadedView(targetView);
+    } finally {
+      if (requestId === reloadSeqRef.current) {
+        setTimelineLoading(false);
+      }
+    }
   }, [view, selectedTag, timePreset, timeRange]);
 
   // Always keep ref pointing to latest reload — event listeners use this to avoid stale closures
@@ -354,8 +373,10 @@ export default function App() {
     api.getConfig()
       .then((cfg) => {
         clearTimeout(timeoutId);
+        setConfigLoadError(null);
         setConfig(cfg);
         setSettingsForm(cfg);
+        void reloadRef.current();
       })
       .catch((err: unknown) => {
         clearTimeout(timeoutId);
@@ -799,7 +820,13 @@ export default function App() {
                 </button>
               </div>
             </section>
-            <ThoughtTimeline groups={groups} allTags={allTags} onArchive={(id) => void api.archiveThought(id, true).then(() => reload())} onUpdate={() => void reload()} />
+            <ThoughtTimeline
+              groups={loadedView === "home" ? groups : []}
+              allTags={allTags}
+              loading={timelineLoading && loadedView !== "home"}
+              onArchive={(id) => void api.archiveThought(id, true).then(() => reload())}
+              onUpdate={() => void reload()}
+            />
           </>
         )}
 
@@ -810,7 +837,7 @@ export default function App() {
                 <h2>Archive</h2>
                 <p className="view-subtitle">已归档的想法</p>
               </div>
-              {groups.length > 0 && (
+              {loadedView === "archive" && groups.length > 0 && (
                 <button
                   type="button"
                   className="btn-danger-outline archive-delete-all"
@@ -834,6 +861,7 @@ export default function App() {
             <ThoughtTimeline
               groups={groups}
               allTags={allTags}
+              loading={timelineLoading && loadedView !== "archive"}
               onArchive={(id) => void api.archiveThought(id, false).then(() => reload())}
               onUpdate={() => void reload()}
               onDelete={(id) => {
@@ -1237,6 +1265,7 @@ export default function App() {
 function ThoughtTimeline({
   groups,
   allTags,
+  loading = false,
   onArchive,
   onUpdate,
   onDelete,
@@ -1245,6 +1274,7 @@ function ThoughtTimeline({
 }: {
   groups: GroupedThoughts[];
   allTags: string[];
+  loading?: boolean;
   onArchive: (id: string) => void;
   onUpdate: () => void;
   onDelete?: (id: string) => void;
@@ -1279,6 +1309,14 @@ function ThoughtTimeline({
   const previewTags = readOnly
     ? (detailThought?.tags ?? [])
     : extractTagsFromContent(editContent);
+
+  if (loading) {
+    return (
+      <div className="empty-state">
+        <p>加载中...</p>
+      </div>
+    );
+  }
 
   if (groups.length === 0) {
     return (
